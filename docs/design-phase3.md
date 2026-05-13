@@ -125,7 +125,7 @@ Tier 3 — Long-term index:   chapters 50+ back    keyword-frequency rows (SQLit
 
 ### sqlite-vec Retrieval
 
-For chapters in the long-term index, use `sqlite-vec` (in-process, no server) to embed and search summaries:
+For chapters in the long-term index, use `sqlite-vec` (in-process, no server) to embed and search summaries. If you need Chinese support, use a multilingual embedding model so Chinese chapter summaries, queries, and notes are embedded in the same vector space. For best quality on a local server, prefer a high-end multilingual model even if it is heavier:
 
 ```python
 import sqlite_vec
@@ -348,12 +348,22 @@ Status polling (5s interval) is sufficient — no WebSocket yet.
 | LLM (planning/critique) | Claude Sonnet |
 | LLM (generation/style/edit) | Claude Haiku |
 | Storage | Files + SQLite (`checkpoints.db`, `embeddings.db`, `chapter_metrics.db`) |
-| Semantic retrieval | `sqlite-vec` (in-process, no server) |
+| Semantic retrieval | `sqlite-vec` + multilingual embedding model (for Chinese support) |
 | Orchestration | LangGraph + `SqliteSaver` + `asyncio` |
 | API | FastAPI + `uvicorn` |
 | Output validation | Pydantic v2 + `ContractEnforcer` |
 | Observability | LangSmith |
 | Dependencies | `anthropic`, `langgraph`, `pydantic`, `fastapi`, `uvicorn`, `sqlite-vec`, `pyyaml`, `langsmith` |
+
+Recommended embedding models for Chinese support:
+
+- Best quality local choice: `jinaai/jina-embeddings-v4` if you can afford a larger model on your server. It is multilingual, supports 30+ languages, and is built for dense + late-interaction retrieval.
+- Best practical fallback: `BAAI/bge-m3` if you want a smaller open-source model with strong multilingual coverage and simpler resource usage.
+- If you want a Chinese-focused lightweight model only: `BAAI/bge-small-zh-v1.5`.
+
+Latest benchmark note:
+
+- A 2026 benchmark article ranks `jina-embeddings-v4` above `bge-m3` for cross-lingual retrieval and key-information retrieval, while `bge-m3` remains the better footprint/complexity tradeoff.
 
 ---
 

@@ -23,7 +23,7 @@ python run.py init             # 初始化工作区（在当前目录）
 python run.py status           # 显示当前状态
 python run.py setup --idea "侦探赛博朋克…"   # 交互式世界/宪章设置
 python run.py plan novel       # 生成 novel_plan.json（结构）
-python run.py plan arc 1       # 生成 arc_01/arc_plan.json
+python run.py plan arc 1-2     # 生成 arc_01/arc_plan.json（或 arc_01..arc_02 的范围）
 python run.py plan chapter 1-3 # 生成章节计划
 python run.py generate         # 生成正文（自动从上次进度续跑）
 ```
