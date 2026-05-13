@@ -44,3 +44,5 @@ and add a new command:
 - `plan chapter [chapter range]`: generate `novel_plan.json`
 
 what do you think?
+
+
