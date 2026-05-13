@@ -50,6 +50,9 @@ No Arc Manager yet — the Novel Planner owns pacing directly. No Critique Agent
 
 ```text
 /novel/
+  config.yaml                  ← provider + per-agent model config (written by init)
+  .env                         ← API keys template (written by init; user fills values)
+  .gitignore                   ← includes .env
   setup/
     synopses_v1.json         ← written by Synopsis Generator (each regeneration = new version)
     synopses_v2.json         ← written on regeneration
@@ -299,21 +302,58 @@ def run_setup_writer(synopsis: dict, world: dict, notes: str, output_dir: str):
 Plain sequential Python — no graph, no retry logic, no async:
 
 ```python
+def init_novel(output_dir: str):
+  """Create a novel workspace with starter config files."""
+  make_dirs(output_dir, [
+    "setup", "characters", "arcs/arc_01", "chapters"
+  ])
+
+  # 1) Write provider + model config
+  write_yaml(f"{output_dir}/config.yaml", {
+    "providers": {
+      "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
+      "openai": {"api_key_env": "OPENAI_API_KEY", "base_url": "https://api.openai.com/v1"},
+      "deepseek": {"api_key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com/v1"},
+    },
+    "agents": {
+      "synopsis_generator": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
+      "world_generator": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
+      "setup_writer": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
+      "novel_planner": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
+      "chapter_planner": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
+      "scene_generator": {"provider": "anthropic", "model": "claude-sonnet-4-5"},
+    },
+    "defaults": {"max_tokens": 4096, "temperature": 1.0},
+  })
+
+  # 2) Write env template (no secrets)
+  write_text(
+    f"{output_dir}/.env",
+    "ANTHROPIC_API_KEY=\nOPENAI_API_KEY=\nDEEPSEEK_API_KEY=\n"
+  )
+
+  # 3) Ensure .env is not committed
+  write_text(f"{output_dir}/.gitignore", ".env\n")
+
+
 def main(idea: str, output_dir: str):
+  load_dotenv(f"{output_dir}/.env")
+  config = load_config(f"{output_dir}/config.yaml")
+
     # Stage A: Interactive Setup (skipped if setup already completed)
     if not exists(f"{output_dir}/novel_plan.json"):
-        run_setup(idea, output_dir)     # interactive: loops until user confirms
+    run_setup(idea, output_dir, config)     # interactive: loops until user confirms
 
     # Stage B: Generation
     state = load_state(output_dir)
-    run_generation(state, output_dir)
+  run_generation(state, output_dir, config)
 
 
-def run_setup(idea: str, output_dir: str):
+def run_setup(idea: str, output_dir: str, config: dict):
     previous_synopses = None
     while True:
         feedback = None if previous_synopses is None else input("調整方向（或按 Enter 重來）: ")
-        synopses = generate_synopses(idea, feedback=feedback, previous=previous_synopses)
+        synopses = generate_synopses(idea, feedback=feedback, previous=previous_synopses, config=config)
         _, path = next_version("synopses", output_dir)
         write_json(path, synopses)
         previous_synopses = synopses
@@ -328,7 +368,7 @@ def run_setup(idea: str, output_dir: str):
     previous_worlds = None
     while True:
         feedback = None if previous_worlds is None else input("調整方向（或按 Enter 重來）: ")
-        worlds = generate_worlds(synopsis, feedback=feedback, previous=previous_worlds)
+        worlds = generate_worlds(synopsis, feedback=feedback, previous=previous_worlds, config=config)
         _, path = next_version("worlds", output_dir)
         write_json(path, worlds)
         previous_worlds = worlds
@@ -340,13 +380,13 @@ def run_setup(idea: str, output_dir: str):
 
     world = load_json(f"{output_dir}/setup/chosen_world.json")
     notes = input("其他補充想法（可留空）: ")
-    run_setup_writer(synopsis, world, notes, output_dir)
+    run_setup_writer(synopsis, world, notes, output_dir, config)
 
 
-def run_generation(state: dict, output_dir: str):
+def run_generation(state: dict, output_dir: str, config: dict):
     # Step 1: plan the novel (once)
     if not exists(f"{output_dir}/novel_plan.json"):
-        novel_plan = plan_novel(state["constitution"], state["world"])
+        novel_plan = plan_novel(state["constitution"], state["world"], config=config)
         write_json(f"{output_dir}/novel_plan.json", novel_plan)
         state["novel_plan"] = novel_plan
 
@@ -356,11 +396,11 @@ def run_generation(state: dict, output_dir: str):
         if exists(f"{output_dir}/chapters/ch_{i:03d}.md"):
             continue   # resume: skip already-written chapters
 
-        chapter_plan = plan_chapter(i, state)
+        chapter_plan = plan_chapter(i, state, config=config)
         write_json(f"{output_dir}/arcs/arc_01/ch_{i:03d}_plan.json", chapter_plan)
         state["chapter_plan"] = chapter_plan
 
-        prose = generate_chapter(state)
+        prose = generate_chapter(state, config=config)
         write_text(f"{output_dir}/chapters/ch_{i:03d}.md", prose)
 
         state["chapter_index"] = i + 1
@@ -369,30 +409,124 @@ def run_generation(state: dict, output_dir: str):
 
 Crash recovery: setup saves a versioned file after each generation call. Generation skips already-written chapters. Re-running the script from any point is safe.
 
----
-
-## 9. LLM Calls
-
-Simple wrapper — no Pydantic contract yet, just `json.loads` with one retry:
+CLI entrypoints:
 
 ```python
-def call_llm(prompt: list[dict], expect_json: bool = True) -> str | dict:
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=4096,
-        messages=prompt,
-    )
-    raw = response.content[0].text
+def cli():
+  args = parse_args()
+  if args.command == "init":
+    init_novel(args.output)
+  elif args.command == "run":
+    main(args.idea, args.output)
+```
+
+---
+
+## 9. Model Configuration
+
+All provider credentials and per-agent model assignments live in `config.yaml`. No API keys in code.
+
+### 9.1 config.yaml
+
+```yaml
+# config.yaml — committed to repo (no secrets; keys come from env vars)
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY       # env var name, not the value
+    # base_url: https://...             # optional: proxy or private endpoint
+  openai:
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+  deepseek:
+    api_key_env: DEEPSEEK_API_KEY
+    base_url: https://api.deepseek.com/v1
+
+agents:
+  synopsis_generator: {provider: anthropic, model: claude-sonnet-4-5}
+  world_generator:    {provider: anthropic, model: claude-sonnet-4-5}
+  setup_writer:       {provider: anthropic, model: claude-sonnet-4-5}
+  novel_planner:      {provider: anthropic, model: claude-sonnet-4-5}
+  chapter_planner:    {provider: anthropic, model: claude-sonnet-4-5}
+  scene_generator:    {provider: anthropic, model: claude-sonnet-4-5}
+
+defaults:
+  max_tokens: 4096
+  temperature: 1.0
+```
+
+To switch an agent to DeepSeek, change its entry:
+```yaml
+agents:
+  scene_generator: {provider: deepseek, model: deepseek-chat}
+```
+
+### 9.2 Provider Abstraction
+
+All providers except Anthropic are accessed via the OpenAI-compatible API (OpenAI SDK with custom `base_url`). Anthropic uses its own SDK.
+
+```python
+import os, yaml
+from anthropic import Anthropic
+from openai import OpenAI
+
+def load_config(path: str = "config.yaml") -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+def make_client(provider: str, config: dict):
+    p = config["providers"][provider]
+    key = os.environ[p["api_key_env"]]
+    if provider == "anthropic":
+        kwargs = {"api_key": key}
+        if "base_url" in p:
+            kwargs["base_url"] = p["base_url"]
+        return Anthropic(**kwargs)
+    else:                               # OpenAI-compatible
+        return OpenAI(api_key=key, base_url=p["base_url"])
+```
+
+### 9.3 Unified call_llm()
+
+The wrapper selects the right client and normalises the response:
+
+```python
+def call_llm(
+    agent: str,
+    prompt: list[dict],
+    config: dict,
+    expect_json: bool = True,
+) -> str | dict:
+    agent_cfg = config["agents"][agent]
+    provider  = agent_cfg["provider"]
+    model     = agent_cfg["model"]
+    client    = make_client(provider, config)
+    max_tok   = config["defaults"]["max_tokens"]
+
+    if provider == "anthropic":
+        # system messages must be passed as the `system` parameter
+        system = " ".join(m["content"] for m in prompt if m["role"] == "system")
+        messages = [m for m in prompt if m["role"] != "system"]
+        raw = client.messages.create(
+            model=model, max_tokens=max_tok, system=system, messages=messages
+        ).content[0].text
+    else:                               # OpenAI-compatible
+        raw = client.chat.completions.create(
+            model=model, max_tokens=max_tok, messages=prompt
+        ).choices[0].message.content
+
     if expect_json:
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
-            # one retry with explicit instruction
             prompt.append({"role": "assistant", "content": raw})
             prompt.append({"role": "user", "content": "Your response was not valid JSON. Reply with only the JSON object."})
-            raw = client.messages.create(model="claude-sonnet-4-5", max_tokens=4096, messages=prompt).content[0].text
-            return json.loads(raw)
+            return call_llm(agent, prompt, config, expect_json=True)  # one retry
     return raw
+```
+
+All agent calls pass their agent name:
+```python
+synopses = call_llm("synopsis_generator", prompt, config)
 ```
 
 ---
@@ -400,11 +534,16 @@ def call_llm(prompt: list[dict], expect_json: bool = True) -> str | dict:
 ## 10. How to Test
 
 ```bash
-# First run: interactive setup, then generation
-python run.py --idea "A detective in a cyberpunk city searches for her missing brother" --output ./novel
+# 1) Create a new novel workspace with config and env template
+python run.py init --output ./novel
 
-# Resume after crash (setup already done, skip to generation)
-python run.py --output ./novel
+# 2) Fill API keys in ./novel/.env (or set env vars in shell)
+
+# 3) First run: interactive setup, then generation
+python run.py run --idea "A detective in a cyberpunk city searches for her missing brother" --output ./novel
+
+# 4) Resume after crash (setup already done, skip to generation)
+python run.py run --output ./novel
 ```
 
 Check `novel/setup/synopses_v1.json` — do the candidates feel distinct? Check `novel/constitution.md` — does it capture what you intended? Open `novel/chapters/ch_001.md` — does it follow the chapter plan?
@@ -417,11 +556,13 @@ No automated scoring yet — evaluation is human reading.
 
 | Component | Choice |
 |---|---|
-| LLM | Claude Sonnet (planning + generation) |
+| LLM providers | Anthropic (default), OpenAI, DeepSeek — configurable per agent |
+| Model config | `config.yaml` — provider + model per agent, no secrets |
+| Secrets | Environment variables (e.g. `ANTHROPIC_API_KEY`) |
 | Storage | Files (`*.json`, `*.md`, `*.yaml`) |
 | Version control | `git` |
 | Orchestration | Plain Python functions |
-| Dependencies | `anthropic`, `pyyaml` |
+| Dependencies | `anthropic`, `openai`, `pyyaml` |
 
 No LangGraph, no database, no vector store, no Redis.
 
