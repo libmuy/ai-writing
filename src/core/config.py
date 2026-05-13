@@ -47,11 +47,16 @@ def validate_provider_keys(config: Dict[str, Any]):
     providers = config.get("providers", {})
     
     for provider_name, provider_config in providers.items():
+        provider_type = provider_config.get("type")
+        # Mock provider does not require API keys
+        if provider_type == "mock":
+            continue
+
         api_key_env = provider_config.get("api_key_env")
-        
+
         if not api_key_env:
             raise ConfigError(f"Provider {provider_name} missing api_key_env")
-        
+
         if not os.getenv(api_key_env):
             raise ConfigError(f"Environment variable {api_key_env} not set for provider {provider_name}")
     
@@ -81,5 +86,8 @@ def get_provider_instance(provider_name: str, config: Dict[str, Any]):
     elif provider_type == "openai":
         from src.providers.openai_provider import OpenAIProvider
         return OpenAIProvider(provider_name, provider_config)
+    elif provider_type == "mock":
+        from src.providers.mock_provider import MockProvider
+        return MockProvider(provider_name, provider_config)
     else:
         raise ConfigError(f"Unknown provider type: {provider_type}")
