@@ -1,0 +1,17 @@
+providers:
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    model: claude-3-sonnet-20240229
+
+agents:
+  synopsis_generator: { provider: anthropic }
+  world_generator:    { provider: anthropic }
+  setup_writer:       { provider: anthropic }
+  chapter_planner:    { provider: anthropic }
+  scene_generator:    { provider: anthropic }
+
+defaults:
+  max_tokens: 4096
+  temperature: 1.0
+  json_retry_limit: 1
