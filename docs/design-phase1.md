@@ -8,15 +8,33 @@
 
 ## 1. What Gets Built
 
-Three agents wired together with plain Python functions. No graph, no database, no critique loop. Output goes to files you read directly.
+Two stages wired together with plain Python functions. No graph, no database, no critique loop. Output goes to files you read directly.
 
+**Stage A — Interactive Setup** (runs once, interactive):
+```
+setup_synopses() → [user selects] → setup_worlds() → [user selects + refines] → setup_write()
+```
+
+**Stage B — Generation** (runs after setup, non-interactive):
 ```
 plan_novel() → plan_chapter() → generate_scenes() → commit_chapter()
 ```
 
+Both stages use the same `call_llm()` wrapper. Stage A produces `constitution.md`, `world.yaml`, and `novel_plan.json` — the inputs Stage B reads.
+
 ---
 
 ## 2. Agents
+
+### Stage A — Setup Agents
+
+| Agent | What it does |
+|---|---|
+| **Synopsis Generator** | Takes the user's raw idea. Returns 3–5 story concept candidates (`setup/synopses_vN.json`). Can be called repeatedly with feedback. |
+| **World Generator** | Takes the chosen synopsis. Returns 3 world-setting candidates (`setup/worlds_vN.json`). Can be called repeatedly with feedback. |
+| **Setup Writer** | Takes the chosen synopsis + chosen world + any user notes. Writes `constitution.md`, `world.yaml`, and `novel_plan.json` in one LLM call. |
+
+### Stage B — Generation Agents
 
 | Agent | What it does |
 |---|---|
@@ -30,20 +48,27 @@ No Arc Manager yet — the Novel Planner owns pacing directly. No Critique Agent
 
 ## 3. File Layout
 
-```
+```text
 /novel/
-  constitution.md          ← hand-written: invariant rules for tone, world, characters
-  novel_plan.json          ← written by Novel Planner
-  world.yaml               ← hand-written: setting, rules, lore
+  setup/
+    synopses_v1.json         ← written by Synopsis Generator (each regeneration = new version)
+    synopses_v2.json         ← written on regeneration
+    worlds_v1.json           ← written by World Generator
+    worlds_v2.json           ← written on regeneration
+    chosen_synopsis.json     ← user's final selection
+    chosen_world.json        ← user's final selection
+  constitution.md            ← written by Setup Writer (from chosen synopsis + world)
+  novel_plan.json            ← written by Novel Planner
+  world.yaml                 ← written by Setup Writer
   characters/
-    elena.json             ← hand-written: status, goals, relationships, voice notes
+    elena.json               ← hand-written: status, goals, relationships, voice notes
     dom.json
   arcs/
     arc_01/
-      ch_001_plan.json     ← written by Chapter Planner
+      ch_001_plan.json       ← written by Chapter Planner
       ch_002_plan.json
   chapters/
-    ch_001.md              ← written by Scene Generator
+    ch_001.md                ← written by Scene Generator
     ch_002.md
 ```
 
@@ -116,6 +141,7 @@ The novel is short (≤10 chapters) so everything fits without retrieval.
 ```
 
 ### characters/elena.json
+
 ```json
 {
   "id": "char_elena",
@@ -132,6 +158,7 @@ The novel is short (≤10 chapters) so everything fits without retrieval.
 ```
 
 ### ch_NNN_plan.json
+
 ```json
 {
   "chapter_number": 1,
@@ -149,21 +176,182 @@ The novel is short (≤10 chapters) so everything fits without retrieval.
 
 ---
 
-## 7. Orchestration
+## 7. Interactive Setup Flow
+
+Runs once before generation. Fully interactive — the user drives each step. All intermediate results are saved to `setup/` so the session can be resumed.
+
+### 7.1 Flow
+
+```
+用戶輸入想法
+    ↓
+[Synopsis Generator] → 生成 3–5 個故事概要
+    ↓
+用戶：選擇 / 輸入調整意見重新生成 / 要求全部重來
+    ↓
+[World Generator] → 生成 3 個世界設定候選
+    ↓
+用戶：選擇 / 輸入調整意見重新生成 / 要求全部重來
+    ↓
+用戶確認
+    ↓
+[Setup Writer] → 寫出 constitution.md + world.yaml + novel_plan.json
+```
+
+### 7.2 Regeneration with History
+
+Each generator carries previous results and user feedback into the next call, so regenerated options are meaningfully different:
+
+```python
+def generate_synopses(
+    idea: str,
+    feedback: str | None = None,
+    previous: list | None = None,
+) -> list[dict]:
+    prompt = [{"role": "user", "content": idea}]
+    if previous:
+        prompt.append({"role": "assistant", "content": json.dumps(previous)})
+        if feedback:
+            prompt.append({"role": "user", "content": f"不滿意以上結果。調整方向：{feedback}。請重新生成。"})
+        else:
+            prompt.append({"role": "user", "content": "請生成風格完全不同的選項。"})
+    return call_llm(prompt, expect_json=True)   # returns list of synopsis dicts
+```
+
+Same pattern applies to `generate_worlds()`.
+
+### 7.3 State Persistence
+
+Each generation call saves a versioned file. If the process crashes mid-setup, restarting resumes from the last saved state:
+
+```python
+def next_version(pattern: str, output_dir: str) -> tuple[int, str]:
+    """Returns (version_number, filepath) for the next version of a file pattern."""
+    v = 1
+    while exists(f"{output_dir}/setup/{pattern}_v{v}.json"):
+        v += 1
+    return v, f"{output_dir}/setup/{pattern}_v{v}.json"
+
+# Usage:
+v, path = next_version("synopses", output_dir)
+write_json(path, synopses)          # e.g. setup/synopses_v3.json
+```
+
+`git` tracks all versions automatically — the user can revert to a previous generation at any time.
+
+### 7.4 Setup Writer Output
+
+Takes the confirmed synopsis + world and writes three files in a single LLM call:
+
+```python
+def run_setup_writer(synopsis: dict, world: dict, notes: str, output_dir: str):
+    result = call_llm([{
+        "role": "user",
+        "content": (
+            f"Synopsis:\n{json.dumps(synopsis)}\n\n"
+            f"World:\n{json.dumps(world)}\n\n"
+            f"User notes:\n{notes}\n\n"
+            "Write: (1) constitution rules as markdown, "
+            "(2) world facts as YAML, "
+            "(3) novel_plan as JSON."
+        )
+    }], expect_json=False)
+    # parse sections from result and write to files
+    write_text(f"{output_dir}/constitution.md", result["constitution"])
+    write_yaml(f"{output_dir}/world.yaml",      result["world"])
+    write_json(f"{output_dir}/novel_plan.json",  result["novel_plan"])
+```
+
+### 7.5 Data Schemas
+
+#### setup/synopses_vN.json
+```json
+[
+  {
+    "id": 1,
+    "title": "消失的頻道",
+    "logline": "一個退休駭客發現女兒失蹤前留下的加密訊息，追查下去才發現她早已捲入她父親以爲自己已經遠離的世界。",
+    "tone": "noir, 壓抑",
+    "ending_type": "悲劇性勝利"
+  },
+  { "id": 2, ... },
+  { "id": 3, ... }
+]
+```
+
+#### setup/worlds_vN.json
+```json
+[
+  {
+    "id": 1,
+    "name": "New Meridian",
+    "summary": "被企業議會管治的海岸城市，上層是玻璃塔，下層是永久陰影。",
+    "key_rules": ["植入物受議會頻率管制", "Sector 4 以下無執法覆蓋"],
+    "tone_notes": "視覺上壓抑，科技感低調"
+  }
+]
+```
+
+---
+
+## 8. Orchestration
 
 Plain sequential Python — no graph, no retry logic, no async:
 
 ```python
-def run(seed: str, chapter_count: int, output_dir: str):
-    state = load_state(output_dir)
+def main(idea: str, output_dir: str):
+    # Stage A: Interactive Setup (skipped if setup already completed)
+    if not exists(f"{output_dir}/novel_plan.json"):
+        run_setup(idea, output_dir)     # interactive: loops until user confirms
 
+    # Stage B: Generation
+    state = load_state(output_dir)
+    run_generation(state, output_dir)
+
+
+def run_setup(idea: str, output_dir: str):
+    previous_synopses = None
+    while True:
+        feedback = None if previous_synopses is None else input("調整方向（或按 Enter 重來）: ")
+        synopses = generate_synopses(idea, feedback=feedback, previous=previous_synopses)
+        _, path = next_version("synopses", output_dir)
+        write_json(path, synopses)
+        previous_synopses = synopses
+
+        choice = prompt_user_choice(synopses)       # print list, read index
+        if choice is not None:
+            write_json(f"{output_dir}/setup/chosen_synopsis.json", synopses[choice])
+            break
+
+    synopsis = load_json(f"{output_dir}/setup/chosen_synopsis.json")
+
+    previous_worlds = None
+    while True:
+        feedback = None if previous_worlds is None else input("調整方向（或按 Enter 重來）: ")
+        worlds = generate_worlds(synopsis, feedback=feedback, previous=previous_worlds)
+        _, path = next_version("worlds", output_dir)
+        write_json(path, worlds)
+        previous_worlds = worlds
+
+        choice = prompt_user_choice(worlds)
+        if choice is not None:
+            write_json(f"{output_dir}/setup/chosen_world.json", worlds[choice])
+            break
+
+    world = load_json(f"{output_dir}/setup/chosen_world.json")
+    notes = input("其他補充想法（可留空）: ")
+    run_setup_writer(synopsis, world, notes, output_dir)
+
+
+def run_generation(state: dict, output_dir: str):
     # Step 1: plan the novel (once)
     if not exists(f"{output_dir}/novel_plan.json"):
-        novel_plan = plan_novel(seed, state["constitution"], state["world"])
+        novel_plan = plan_novel(state["constitution"], state["world"])
         write_json(f"{output_dir}/novel_plan.json", novel_plan)
         state["novel_plan"] = novel_plan
 
     # Step 2: plan + generate each chapter in sequence
+    chapter_count = state["novel_plan"]["chapter_count"]
     for i in range(chapter_count):
         if exists(f"{output_dir}/chapters/ch_{i:03d}.md"):
             continue   # resume: skip already-written chapters
@@ -179,11 +367,11 @@ def run(seed: str, chapter_count: int, output_dir: str):
         print(f"  chapter {i+1}/{chapter_count} written")
 ```
 
-Crash recovery: the `if exists(...)` check means re-running the script skips already-written chapters automatically.
+Crash recovery: setup saves a versioned file after each generation call. Generation skips already-written chapters. Re-running the script from any point is safe.
 
 ---
 
-## 8. LLM Calls
+## 9. LLM Calls
 
 Simple wrapper — no Pydantic contract yet, just `json.loads` with one retry:
 
@@ -209,19 +397,23 @@ def call_llm(prompt: list[dict], expect_json: bool = True) -> str | dict:
 
 ---
 
-## 9. How to Test
+## 10. How to Test
 
 ```bash
-python run.py --seed "A detective in a cyberpunk city" --chapters 3 --output ./novel
+# First run: interactive setup, then generation
+python run.py --idea "A detective in a cyberpunk city searches for her missing brother" --output ./novel
+
+# Resume after crash (setup already done, skip to generation)
+python run.py --output ./novel
 ```
 
-Open `novel/chapters/ch_001.md`. Read it. Does it make sense? Does it follow the chapter plan?
+Check `novel/setup/synopses_v1.json` — do the candidates feel distinct? Check `novel/constitution.md` — does it capture what you intended? Open `novel/chapters/ch_001.md` — does it follow the chapter plan?
 
 No automated scoring yet — evaluation is human reading.
 
 ---
 
-## 10. Technology Stack
+## 11. Technology Stack
 
 | Component | Choice |
 |---|---|
@@ -235,7 +427,7 @@ No LangGraph, no database, no vector store, no Redis.
 
 ---
 
-## 11. Success Metric
+## 12. Success Metric
 
 > Can you generate a 3-chapter story that a human finds readable and internally consistent?
 
@@ -243,7 +435,7 @@ Phase 1 is done when you can answer yes without manual editing of the output.
 
 ---
 
-## 12. What Phase 2 Adds
+## 13. What Phase 2 Adds
 
 - Critique Agent + Editor Agent (revision loop)
 - Character Manager (dynamic state updates after each chapter)
