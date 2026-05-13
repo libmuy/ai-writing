@@ -16,7 +16,7 @@ def init_cmd():
     logger.info("[init] Initializing novel workspace...")
     try:
         init_workspace()
-        logger.info("[init] ✓ Workspace initialized successfully")
+        logger.info("[init] SUCCESS: Workspace initialized successfully")
     except Exception as e:
         logger.error(f"[init] Failed: {e}")
         raise
@@ -69,7 +69,7 @@ def setup_cmd(mode: str, idea: str = None):
         else:
             raise ValueError(f"Unknown setup mode: {mode}")
         
-        logger.info(f"[setup] ✓ Setup complete")
+        logger.info(f"[setup] SUCCESS: Setup complete")
     except Exception as e:
         logger.error(f"[setup] Failed: {e}")
         raise
@@ -102,7 +102,7 @@ def plan_cmd(target: str, range_str: str = None):
         else:
             raise ValueError(f"Unknown plan target: {target}")
         
-        logger.info(f"[plan] ✓ Planning complete")
+        logger.info(f"[plan] SUCCESS: Planning complete")
     except Exception as e:
         logger.error(f"[plan] Failed: {e}")
         raise
@@ -123,7 +123,7 @@ def generate_cmd(range_str: str = None):
         
         _generate_chapters(range_str, config)
         
-        logger.info(f"[generate] ✓ Generation complete")
+        logger.info(f"[generate] SUCCESS: Generation complete")
     except Exception as e:
         logger.error(f"[generate] Failed: {e}")
         raise
@@ -201,7 +201,7 @@ def _setup_full(idea: str, config):
         config
     )
     
-    logger.info("[setup] ✓ Full setup complete")
+    logger.info("[setup] SUCCESS: Full setup complete")
 
 
 def _setup_constitution(idea: str, config):
@@ -233,7 +233,7 @@ def _setup_constitution(idea: str, config):
         config
     )
     
-    logger.info("[setup] ✓ Constitution regenerated")
+    logger.info("[setup] SUCCESS: Constitution regenerated")
 
 
 def _setup_world(idea: str, config):
@@ -270,7 +270,7 @@ def _setup_world(idea: str, config):
         config
     )
     
-    logger.info("[setup] ✓ World regenerated")
+    logger.info("[setup] SUCCESS: World regenerated")
 
 
 def _plan_novel(config):
@@ -300,7 +300,7 @@ def _plan_novel(config):
         config
     )
     
-    logger.info("[plan] ✓ Novel plan generated")
+    logger.info("[plan] SUCCESS: Novel plan generated")
 
 
 def _plan_arcs(range_str: str, config):

@@ -37,11 +37,11 @@ def format_status(status: Dict[str, bool]) -> str:
     """Format status for display.
     
     Returns:
-        Status string like "[✓] init | [ ] setup | ..."
+        Status string like "[+] init | [ ] setup | ..."
     """
     parts = []
     for key, value in status.items():
-        check = "✓" if value else " "
+        check = "+" if value else " "
         parts.append(f"[{check}] {key}")
     
     return " | ".join(parts)

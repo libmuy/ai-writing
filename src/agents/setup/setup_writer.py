@@ -43,7 +43,7 @@ class SetupWriter(Agent):
             write_file(root / "constitution.md", constitution)
             write_file(root / "world.yaml", world_yaml)
             
-            logger.info("[setup:writer] ✓ Setup artifacts written")
+            logger.info("[setup:writer] SUCCESS: Setup artifacts written")
             
             return {
                 "constitution": constitution,

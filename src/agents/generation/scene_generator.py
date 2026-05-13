@@ -66,7 +66,7 @@ class SceneGenerator(Agent):
             chapter_path = root / "chapters" / f"ch_{chapter_num:03d}.md"
             write_file(chapter_path, result)
             
-            logger.info(f"[generate:scene] ✓ Chapter {chapter_num} generated")
+            logger.info(f"[generate:scene] SUCCESS: Chapter {chapter_num} generated")
             return result
         except Exception as e:
             logger.error(f"[generate:scene] Failed to generate chapter {chapter_num}: {e}")

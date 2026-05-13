@@ -52,7 +52,7 @@ class ArcManager(Agent):
             root = Path.cwd()
             write_json(root / "novel_plan.json", result)
             
-            logger.info("[plan:arc] ✓ Novel plan generated")
+            logger.info("[plan:arc] SUCCESS: Novel plan generated")
             
             return {"novel_plan": result}
         except Exception as e:
